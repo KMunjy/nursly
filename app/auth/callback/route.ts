@@ -1,53 +1,39 @@
-import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
-import type { NextRequest } from 'next/server'
-import { getPostAuthRedirect, isSafeRedirect } from '@/lib/auth/redirects'
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
+import { cookies } from 'next/headers'
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
+  const type = searchParams.get('type')
   const next = searchParams.get('next') ?? '/'
 
-  if (!code) {
-    return NextResponse.redirect(`${origin}/login?error=missing_code`)
+  if (code) {
+    const cookieStore = cookies()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() { return (cookieStore as any).getAll?.() ?? [] },
+          setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
+            try { cookiesToSet.forEach(({ name, value, options }) => (cookieStore as any).set(name, value, options)) } catch {}
+          },
+        },
+      }
+    )
+
+    const { error } = await supabase.auth.exchangeCodeForSession(code)
+
+    if (!error) {
+      // Password reset flow — redirect to set new password
+      if (type === 'recovery') {
+        return NextResponse.redirect(`${origin}/reset-password`)
+      }
+      // Email verification flow
+      return NextResponse.redirect(`${origin}${next}`)
+    }
   }
 
-  const supabase = createClient()
-  const { error } = await supabase.auth.exchangeCodeForSession(code)
-
-  if (error) {
-    console.error('[auth/callback]', error.message)
-    return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`)
-  }
-
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    return NextResponse.redirect(`${origin}/login?error=no_user`)
-  }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role, status')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile) {
-    return NextResponse.redirect(`${origin}/login?error=no_profile`)
-  }
-
-  // Honour safe redirectTo if passed
-  if (next && next !== '/' && isSafeRedirect(next)) {
-    return NextResponse.redirect(`${origin}${next}`)
-  }
-
-  const { data: nurseProfile } = profile.role === 'nurse'
-    ? await supabase.from('nurse_profiles').select('onboarding_complete').eq('id', user.id).single()
-    : { data: null }
-
-  const redirectPath = getPostAuthRedirect(
-    profile.role as any,
-    nurseProfile?.onboarding_complete ?? false
-  )
-
-  return NextResponse.redirect(`${origin}${redirectPath}`)
+  return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`)
 }

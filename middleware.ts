@@ -6,6 +6,12 @@ import { isSafeRedirect } from '@/lib/auth/redirects'
 const PUBLIC_ROUTES = [
   '/login', '/register', '/verify-email', '/forgot-password',
   '/auth/callback', '/pending-review', '/account-suspended',
+  '/privacy', '/accessibility', '/terms',
+]
+
+const PUBLIC_PREFIXES = [
+  '/api/health',
+  '/_next',
 ]
 
 const PROTECTED_ROUTES: Record<string, string[]> = {
@@ -24,6 +30,11 @@ const ROLE_DEFAULT_PATHS: Record<string, string> = {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // Always allow public prefixes (API health, static files)
+  if (PUBLIC_PREFIXES.some(p => pathname.startsWith(p))) {
+    return NextResponse.next()
+  }
 
   const { supabaseResponse, user } = await updateSession(request)
 
@@ -52,14 +63,14 @@ export async function middleware(request: NextRequest) {
     }
   )
 
+  // Use correct table: nursly_profiles
   const { data: profile } = await supabase
-    .from('profiles')
+    .from('nursly_profiles')
     .select('role, status')
     .eq('id', user.id)
     .single()
 
   if (!profile) {
-    await supabase.auth.signOut()
     return NextResponse.redirect(new URL('/login?error=account_setup_failed', request.url))
   }
 
