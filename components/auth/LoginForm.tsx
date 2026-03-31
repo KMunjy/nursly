@@ -2,63 +2,34 @@
 
 import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import { getPostAuthRedirect, isSafeRedirect } from '@/lib/auth/redirects'
 import Link from 'next/link'
+import { createClient } from '@/lib/supabase/client'
 
 export function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const redirectTo = searchParams.get('redirectTo')
   const supabase = createClient()
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [emailError, setEmailError] = useState<string | null>(null)
-  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setSubmitError(null)
-    setEmailError(null)
-
-    if (!email.includes('@')) {
-      setEmailError('Enter a valid email address')
-      return
-    }
-
+    setError(null)
     setLoading(true)
-
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password })
-
-      if (error) {
-        // Deliberately vague — do not reveal whether email exists
-        setSubmitError('Email or password is incorrect.')
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+      if (signInError) {
+        setError('Email or password is incorrect.')
         return
       }
-
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setSubmitError('Sign in failed. Please try again.'); return }
-
-      const { data: profile } = await supabase
-        .from('profiles').select('role, status').eq('id', user.id).single()
-
-      if (!profile) { setSubmitError('Account not found. Contact support@nursly.com'); return }
-
-      if (redirectTo && isSafeRedirect(redirectTo)) {
-        router.push(redirectTo)
-        return
-      }
-
-      const { data: nurseProfile } = profile.role === 'nurse'
-        ? await supabase.from('nurse_profiles').select('onboarding_complete').eq('id', user.id).single()
-        : { data: null }
-
-      router.push(getPostAuthRedirect(profile.role as any, nurseProfile?.onboarding_complete ?? false))
+      const redirectTo = searchParams.get('redirectTo') || '/'
+      router.push(redirectTo)
+      router.refresh()
     } catch {
-      setSubmitError('Connection issue. Check your internet and try again.')
+      setError('Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -70,27 +41,30 @@ export function LoginForm() {
         <label htmlFor="email" className="form-label">Email address</label>
         <input
           id="email" type="email"
-          className={`form-input ${emailError ? 'form-input--error' : ''}`}
-          value={email} onChange={(e) => setEmail(e.target.value)}
-          autoComplete="email" disabled={loading}
+          className="form-input"
+          value={email} onChange={e => setEmail(e.target.value)}
+          autoComplete="email" placeholder="you@example.com"
+          disabled={loading} required
         />
-        {emailError && <span className="form-error" role="alert">{emailError}</span>}
       </div>
 
       <div className="form-group">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-          <label htmlFor="password" className="form-label" style={{ margin: 0 }}>Password</label>
-          <Link href="/forgot-password" style={{ fontSize: '12px' }}>Forgot password?</Link>
-        </div>
+        <label htmlFor="password" className="form-label">
+          Password
+          <Link href="/forgot-password" style={{ float: 'right', fontSize: '14px', fontWeight: 400 }}>
+            Forgot password?
+          </Link>
+        </label>
         <input
           id="password" type="password"
           className="form-input"
-          value={password} onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password" disabled={loading}
+          value={password} onChange={e => setPassword(e.target.value)}
+          autoComplete="current-password"
+          disabled={loading} required
         />
       </div>
 
-      {submitError && <div className="form-alert" role="alert">{submitError}</div>}
+      {error && <div className="form-alert" role="alert">{error}</div>}
 
       <button type="submit" className="btn-submit" disabled={loading} aria-busy={loading}>
         {loading ? 'Signing in…' : 'Sign in'}
