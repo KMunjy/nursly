@@ -1,17 +1,16 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
-import { createServerClient } from '@supabase/ssr'
 import { isSafeRedirect } from '@/lib/auth/redirects'
 
 const PUBLIC_ROUTES = [
-  '/login', '/register', '/verify-email', '/forgot-password',
+  '/login', '/register', '/verify-email', '/forgot-password', '/reset-password',
   '/auth/callback', '/pending-review', '/account-suspended',
   '/privacy', '/accessibility', '/terms',
 ]
 
 const PUBLIC_PREFIXES = [
   '/api/health',
-  '/_next',
+  '/auth/signout',
 ]
 
 const PROTECTED_ROUTES: Record<string, string[]> = {
@@ -31,12 +30,11 @@ const ROLE_DEFAULT_PATHS: Record<string, string> = {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Always allow public prefixes (API health, static files)
   if (PUBLIC_PREFIXES.some(p => pathname.startsWith(p))) {
     return NextResponse.next()
   }
 
-  const { supabaseResponse, user } = await updateSession(request)
+  const { supabaseResponse, user, supabase } = await updateSession(request)
 
   const isPublicRoute = PUBLIC_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(route + '/')
@@ -52,18 +50,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => request.cookies.getAll(),
-        setAll: () => {},
-      },
-    }
-  )
-
-  // Use correct table: nursly_profiles
+  // Use the same supabase client from updateSession (has fresh session)
   const { data: profile } = await supabase
     .from('nursly_profiles')
     .select('role, status')
@@ -71,7 +58,8 @@ export async function middleware(request: NextRequest) {
     .single()
 
   if (!profile) {
-    return NextResponse.redirect(new URL('/login?error=account_setup_failed', request.url))
+    // Profile doesn't exist yet — send to pending review
+    return NextResponse.redirect(new URL('/pending-review', request.url))
   }
 
   if (profile.status === 'pending_verification') {
@@ -90,6 +78,12 @@ export async function middleware(request: NextRequest) {
 
   if (profile.status === 'suspended' || profile.status === 'deactivated') {
     return NextResponse.redirect(new URL('/account-suspended', request.url))
+  }
+
+  // Active user — redirect root to role dashboard
+  if (pathname === '/') {
+    const defaultPath = ROLE_DEFAULT_PATHS[profile.role] ?? '/login'
+    return NextResponse.redirect(new URL(defaultPath, request.url))
   }
 
   const matchedPrefix = Object.keys(PROTECTED_ROUTES).find(

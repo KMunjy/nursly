@@ -26,5 +26,7 @@ export async function updateSession(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
-  return { supabaseResponse, user }
+  // Return the supabase client too so middleware can use it for profile queries
+  // (same session — avoids stale cookie issue)
+  return { supabaseResponse, user, supabase }
 }
